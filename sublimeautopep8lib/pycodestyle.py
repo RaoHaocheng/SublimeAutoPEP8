@@ -321,11 +321,7 @@ def _is_one_liner(logical_line, indent_level, lines, line_number):
 
     line_idx = line_number - 1
 
-    if line_idx < 1:
-        prev_indent = 0
-    else:
-        prev_indent = expand_indent(lines[line_idx - 1])
-
+    prev_indent = 0 if line_idx < 1 else expand_indent(lines[line_idx - 1])
     if prev_indent > indent_level:
         return False
 
@@ -503,10 +499,10 @@ def missing_whitespace_after_import_keyword(logical_line):
     E275: from importable.module import(bar, baz)
     """
     line = logical_line
-    indicator = ' import('
     if line.startswith('from '):
+        indicator = ' import('
         found = line.find(indicator)
-        if -1 < found:
+        if found > -1:
             pos = found + len(indicator) - 1
             yield pos, "E275 missing whitespace after keyword"
 
@@ -694,11 +690,7 @@ def continued_indentation(logical_line, tokens, indent_level, hang_closing,
             elif visual_indent is True:
                 # visual indent is verified
                 indent[depth] = start[1]
-            elif visual_indent in (text, str):
-                # ignore token lined up with matching one from a
-                # previous line
-                pass
-            else:
+            elif visual_indent not in (text, str):
                 # indent is broken
                 if hang <= 0:
                     error = "E122", "missing indentation or outdented"
@@ -885,40 +877,16 @@ def missing_whitespace_around_operator(logical_line, tokens):
             parens -= 1
         if need_space:
             if start != prev_end:
-                # Found a (probably) needed space
-                if need_space is not True and not need_space[1]:
-                    yield (need_space[0],
-                           "E225 missing whitespace around operator")
                 need_space = False
             elif text == '>' and prev_text in ('<', '-'):
                 # Tolerate the "<>" operator, even if running Python 3
                 # Deal with Python 3's annotated return value "->"
                 pass
-            elif (
-                    # def f(a, /, b):
-                    #           ^
-                    # def f(a, b, /):
-                    #              ^
-                    prev_text == '/' and text in {',', ')'} or
-                    # def f(a, b, /):
-                    #               ^
-                    prev_text == ')' and text == ':'
+            elif (prev_text != '/' or text not in {',', ')'}) and (
+                prev_text != ')' or text != ':'
             ):
-                # Tolerate the "/" operator in function definition
-                # For more info see PEP570
-                pass
-            else:
-                if need_space is True or need_space[1]:
-                    # A needed trailing space was not found
-                    yield prev_end, "E225 missing whitespace around operator"
-                elif prev_text != '**':
-                    code, optype = 'E226', 'arithmetic'
-                    if prev_text == '%':
-                        code, optype = 'E228', 'modulo'
-                    elif prev_text not in ARITHMETIC_OP:
-                        code, optype = 'E227', 'bitwise or shift'
-                    yield (need_space[0], "%s missing whitespace "
-                           "around %s operator" % (code, optype))
+                # A needed trailing space was not found
+                yield prev_end, "E225 missing whitespace around operator"
                 need_space = False
         elif token_type in operator_types and prev_end is not None:
             if text == '=' and parens:
@@ -1058,10 +1026,13 @@ def whitespace_before_comment(logical_line, tokens):
     for token_type, text, start, end, line in tokens:
         if token_type == tokenize.COMMENT:
             inline_comment = line[:start[1]].strip()
-            if inline_comment:
-                if prev_end[0] == start[0] and start[1] < prev_end[1] + 2:
-                    yield (prev_end,
-                           "E261 at least two spaces before inline comment")
+            if (
+                inline_comment
+                and prev_end[0] == start[0]
+                and start[1] < prev_end[1] + 2
+            ):
+                yield (prev_end,
+                       "E261 at least two spaces before inline comment")
             symbol, sp, comment = text.partition(' ')
             bad_prefix = symbol not in '#:' and (symbol.lstrip('#')[:1] or '#')
             if inline_comment:
@@ -1092,7 +1063,7 @@ def imports_on_separate_lines(logical_line):
     line = logical_line
     if line.startswith('import '):
         found = line.find(',')
-        if -1 < found and ';' not in line[:found]:
+        if found > -1 and ';' not in line[:found]:
             yield found, "E401 multiple imports on one line"
 
 
@@ -1123,7 +1094,7 @@ def module_imports_on_top_of_file(
             line = line[1:]
         if line and line[0] in 'rR':
             line = line[1:]
-        return line and (line[0] == '"' or line[0] == "'")
+        return line and line[0] in ['"', "'"]
 
     allowed_keywords = (
         'try', 'except', 'else', 'finally', 'with', 'if', 'elif')
@@ -1192,11 +1163,11 @@ def compound_statements(logical_line):
     counts = {char: 0 for char in '{}[]()'}
     while -1 < found < last_char:
         update_counts(line[prev_found:found], counts)
-        if ((counts['{'] <= counts['}'] and   # {'a': 1} (dict)
-             counts['['] <= counts[']'] and   # [1:2] (slice)
-             counts['('] <= counts[')']) and  # (annotation)
-            not (sys.version_info >= (3, 8) and
-                 line[found + 1] == '=')):  # assignment expression
+        if (
+            counts['{'] <= counts['}']
+            and counts['['] <= counts[']']  # {'a': 1} (dict)
+            and counts['('] <= counts[')']  # [1:2] (slice)
+        ) and (sys.version_info < (3, 8) or line[found + 1] != '='):  # assignment expression
             lambda_kw = LAMBDA_REGEX.search(line, 0, found)
             if lambda_kw:
                 before = line[:lambda_kw.start()].rstrip()
@@ -1211,7 +1182,7 @@ def compound_statements(logical_line):
         prev_found = found
         found = line.find(':', found + 1)
     found = line.find(';')
-    while -1 < found:
+    while found > -1:
         if found < last_char:
             yield found, "E702 multiple statements on one line (semicolon)"
         else:
@@ -1521,28 +1492,30 @@ def ambiguous_identifier(logical_line, tokens):
             elif text == ')':
                 parameter_parentheses_level -= 1
         # identifiers on the lhs of an assignment operator
-        if token_type == tokenize.OP and '=' in text and \
-                parameter_parentheses_level == 0:
-            if prev_text in idents_to_avoid:
-                ident = prev_text
-                pos = prev_start
+        if (
+            token_type == tokenize.OP
+            and '=' in text
+            and parameter_parentheses_level == 0
+            and prev_text in idents_to_avoid
+        ):
+            ident = prev_text
+            pos = prev_start
         # identifiers bound to values with 'as', 'for',
         # 'global', or 'nonlocal'
-        if prev_text in ('as', 'for', 'global', 'nonlocal'):
-            if text in idents_to_avoid:
-                ident = text
-                pos = start
+        if (
+            prev_text in ('as', 'for', 'global', 'nonlocal')
+            and text in idents_to_avoid
+        ):
+            ident = text
+            pos = start
         # function parameter definitions
-        if is_func_def:
-            if text in idents_to_avoid:
-                ident = text
-                pos = start
-        if prev_text == 'class':
-            if text in idents_to_avoid:
-                yield start, "E742 ambiguous class definition '%s'" % text
-        if prev_text == 'def':
-            if text in idents_to_avoid:
-                yield start, "E743 ambiguous function definition '%s'" % text
+        if is_func_def and text in idents_to_avoid:
+            ident = text
+            pos = start
+        if prev_text == 'class' and text in idents_to_avoid:
+            yield start, "E742 ambiguous class definition '%s'" % text
+        if prev_text == 'def' and text in idents_to_avoid:
+            yield start, "E743 ambiguous function definition '%s'" % text
         if ident:
             yield pos, "E741 ambiguous variable name '%s'" % ident
         prev_type = token_type
@@ -1690,8 +1663,7 @@ def python_3000_async_await_keywords(logical_line, tokens):
                     state = ('async_stmt', start)
                 elif text == 'await':
                     state = ('await', start)
-                elif (token_type == tokenize.NAME and
-                      text in ('def', 'for')):
+                elif text in ('def', 'for'):
                     state = ('define', start)
 
         elif state[0] == 'async_stmt':
@@ -1747,44 +1719,47 @@ def maximum_doc_length(logical_line, max_doc_length, noqa, tokens):
         return
 
     prev_token = None
-    skip_lines = set()
-    # Skip lines that
-    for token_type, text, start, end, line in tokens:
-        if token_type not in SKIP_COMMENTS.union([tokenize.STRING]):
-            skip_lines.add(line)
+    skip_lines = {
+        line
+        for token_type, text, start, end, line in tokens
+        if token_type not in SKIP_COMMENTS.union([tokenize.STRING])
+    }
 
     for token_type, text, start, end, line in tokens:
         # Skip lines that aren't pure strings
         if token_type == tokenize.STRING and skip_lines:
             continue
-        if token_type in (tokenize.STRING, tokenize.COMMENT):
-            # Only check comment-only lines
-            if prev_token is None or prev_token in SKIP_TOKENS:
-                lines = line.splitlines()
-                for line_num, physical_line in enumerate(lines):
-                    if hasattr(physical_line, 'decode'):  # Python 2
-                        # The line could contain multi-byte characters
-                        try:
-                            physical_line = physical_line.decode('utf-8')
-                        except UnicodeError:
-                            pass
-                    if start[0] + line_num == 1 and line.startswith('#!'):
-                        return
-                    length = len(physical_line)
-                    chunks = physical_line.split()
-                    if token_type == tokenize.COMMENT:
-                        if (len(chunks) == 2 and
-                                length - len(chunks[-1]) < MAX_DOC_LENGTH):
-                            continue
-                    if len(chunks) == 1 and line_num + 1 < len(lines):
-                        if (len(chunks) == 1 and
-                                length - len(chunks[-1]) < MAX_DOC_LENGTH):
-                            continue
-                    if length > max_doc_length:
-                        doc_error = (start[0] + line_num, max_doc_length)
-                        yield (doc_error, "W505 doc line too long "
-                                          "(%d > %d characters)"
-                               % (length, max_doc_length))
+        if token_type in (tokenize.STRING, tokenize.COMMENT) and (
+            prev_token is None or prev_token in SKIP_TOKENS
+        ):
+            lines = line.splitlines()
+            for line_num, physical_line in enumerate(lines):
+                if hasattr(physical_line, 'decode'):  # Python 2
+                    # The line could contain multi-byte characters
+                    try:
+                        physical_line = physical_line.decode('utf-8')
+                    except UnicodeError:
+                        pass
+                if start[0] + line_num == 1 and line.startswith('#!'):
+                    return
+                length = len(physical_line)
+                chunks = physical_line.split()
+                if token_type == tokenize.COMMENT and (
+                    len(chunks) == 2
+                    and length - len(chunks[-1]) < MAX_DOC_LENGTH
+                ):
+                    continue
+                if (
+                    len(chunks) == 1
+                    and line_num + 1 < len(lines)
+                    and length - len(chunks[-1]) < MAX_DOC_LENGTH
+                ):
+                    continue
+                if length > max_doc_length:
+                    doc_error = (start[0] + line_num, max_doc_length)
+                    yield (doc_error, "W505 doc line too long "
+                                      "(%d > %d characters)"
+                           % (length, max_doc_length))
         prev_token = token_type
 
 
@@ -1983,7 +1958,7 @@ class Checker(object):
             self.lines = lines
         if self.lines:
             ord0 = ord(self.lines[0][0])
-            if ord0 in (0xef, 0xfeff):  # Strip the UTF-8 BOM
+            if ord0 in {0xEF, 0xFEFF}:  # Strip the UTF-8 BOM
                 if ord0 == 0xfeff:
                     self.lines[0] = self.lines[0][1:]
                 elif self.lines[0][:3] == '\xef\xbb\xbf':
@@ -2017,9 +1992,7 @@ class Checker(object):
 
     def run_check(self, check, argument_names):
         """Run a check plugin."""
-        arguments = []
-        for name in argument_names:
-            arguments.append(getattr(self, name))
+        arguments = [getattr(self, name) for name in argument_names]
         return check(*arguments)
 
     def init_checker_state(self, name, argument_names):
@@ -2183,7 +2156,7 @@ class Checker(object):
         parens = 0
         for token in self.generate_tokens():
             self.tokens.append(token)
-            token_type, text = token[0:2]
+            token_type, text = token[:2]
             if self.verbose >= 3:
                 if token[2][0] == token[3][0]:
                     pos = '[%s:%s]' % (token[2][1] or '', token[3][1])
@@ -2345,10 +2318,7 @@ class StandardReport(BaseReport):
                 'code': code, 'text': text,
             })
             if self._show_source:
-                if line_number > len(self.lines):
-                    line = ''
-                else:
-                    line = self.lines[line_number - 1]
+                line = '' if line_number > len(self.lines) else self.lines[line_number - 1]
                 print(line.rstrip())
                 print(re.sub(r'\S', ' ', line[:offset]) + '^')
             if self._show_pep8 and doc:
@@ -2389,7 +2359,7 @@ class StyleGuide(object):
         # build options from dict
         options_dict = dict(*args, **kwargs)
         arglist = None if parse_argv else options_dict.get('paths', None)
-        verbose = options_dict.get('verbose', None)
+        verbose = options_dict.get('verbose')
         options, self.paths = process_options(
             arglist, parse_argv, config_file, parser, verbose)
         if options_dict:
