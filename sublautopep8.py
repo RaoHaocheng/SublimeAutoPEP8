@@ -150,8 +150,7 @@ def pep8_params():
     params.append(sublime.expand_variables('${folder}/fake-file', env_vars))
 
     logger.info('pep8_params: %s', params)
-    args = autopep8.parse_args(params, apply_config=True)
-    return args
+    return autopep8.parse_args(params, apply_config=True)
 
 
 class AutoPep8Command(sublime_plugin.TextCommand):

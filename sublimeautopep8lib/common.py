@@ -62,7 +62,7 @@ def create_diff(source1, source2, filepath):
         'fixed: %s' % filepath)
 
     # fix issue with join two last lines
-    lines = [item for item in result]
+    lines = list(result)
     if len(lines) >= 4 and lines[-2][-1] != '\n':
         lines[-2] += '\n'
 
@@ -217,7 +217,7 @@ def find_not_fixed(text, filepath):
     result = ''
     last_to_fix = text.rfind('issue(s) to fix')
     if last_to_fix > 0:
+        message = 'File "{0}", line {1}: not fixed {2}\n'
         for code, line in PATTERN.findall(text[last_to_fix:]):
-            message = 'File "{0}", line {1}: not fixed {2}\n'
             result += message.format(filepath, line, code)
     return result
